@@ -1,5 +1,5 @@
 const express = require('express');
-const fs = require('fs');
+const fs = require('fs').promises;
 
 const app = express();
 const PORT = 3000;
@@ -55,70 +55,77 @@ function validateNums(req, res, next) {
     next();
 }
 
-function saveToFile(data) {
-    const existingData = fs.existsSync('results.json') ? JSON.parse(fs.readFileSync('results.json')) : [];
-    existingData.push(data);
-    fs.writeFileSync('results.json', JSON.stringify(existingData, null, 4));
+async function saveResultsMiddleware(req, res, next) {
+    if (req.query.save === 'true') {
+        try {
+            const data = {
+                timestamp: new Date().toISOString(),
+                ...res.locals.result
+            };
+            const existingData = await fs.readFile('results.json', 'utf-8').catch(() => '[]');
+            const allData = [...JSON.parse(existingData), data];
+            await fs.writeFile('results.json', JSON.stringify(allData, null, 4));
+        } catch (err) {
+            console.error("Error saving data:", err);
+        }
+    }
+    next();
 }
 
-// Root Route
 app.get('/', (req, res) => {
     res.send('Welcome to the statistics API! Use /mean, /median, /mode, or /all with the appropriate query parameters.');
 });
 
-// Apply the nums validator middleware
 app.use('/mean', validateNums);
 app.use('/median', validateNums);
 app.use('/mode', validateNums);
 app.use('/all', validateNums);
 
-// Statistical Routes
-app.get('/mean', (req, res) => {
-    return res.json({
+app.get('/mean', (req, res, next) => {
+    res.locals.result = {
         operation: 'mean',
         value: mean(req.nums)
-    });
+    };
+    next();
 });
 
-app.get('/median', (req, res) => {
-    return res.json({
+app.get('/median', (req, res, next) => {
+    res.locals.result = {
         operation: 'median',
         value: median(req.nums)
-    });
+    };
+    next();
 });
 
-app.get('/mode', (req, res) => {
-    return res.json({
+app.get('/mode', (req, res, next) => {
+    res.locals.result = {
         operation: 'mode',
         value: mode(req.nums)
-    });
+    };
+    next();
 });
 
-app.get('/all', (req, res) => {
-    return res.json({
+app.get('/all', saveResultsMiddleware, (req, res, next) => {
+    res.locals.result = {
         operation: 'all',
         mean: mean(req.nums),
         median: median(req.nums),
         mode: mode(req.nums)
-    });
+    };
+    next();
 });
 
-// Save results middleware
 app.use((req, res, next) => {
-    if (req.query.save === 'true') {
-        const data = {
-            timestamp: new Date().toISOString(),
-            ...res.locals
-        };
-        saveToFile(data);
+    if (req.get('Accept') === 'text/html') {
+        res.send(`<pre>${JSON.stringify(res.locals.result, null, 4)}</pre>`);
+    } else {
+        res.json(res.locals.result);
     }
-    next();
 });
 
-// Handle Accept header
-app.use((req, res, next) => {
-    res.locals.isHtml = req.get('Accept') === 'text/html';
-    next();
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    res.status(500).send('Something went wrong!');
 });
 
 app.listen(PORT, () => {
